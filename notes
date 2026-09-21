@@ -1,0 +1,4 @@
+--- --- --- --- ---
+when excel file selected -> auto attempt to convert, once conversion completes without error -> quickly prompt user to accept the creation in the downloads folder "Confirm / Decline"
+
+After selction of file to convert before running the conversion logic prompt user if they want to convert "selected_file_name" if no then clear the selected path and reopent the file dialogue search / This will be the same box that asks for a starting coordinate
