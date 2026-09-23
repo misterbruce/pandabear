@@ -9,8 +9,12 @@ How it works:
     - Employee Emails on the other hand will, once clicked, open an interactive display that directly manipulates a local _.json_ file that ties employee names with their Microsoft emails.
   After the converted file appears in the file explorer, the user will then be able to select it from the Microsoft Teams/Shifts upload button.
 
-How to use it:
-  _underconstruction_
+How to use it (_assuming it has been packaged into a single .exe appropriately_):
+  - After running the .exe you will select an .xlsx file with the appropriate layout (provided in repo's folder)
+  - Post-selection a scroll-able field will appear prompting for a specific sheet selection
+  - Once the doc and sheet has been selected there will be a save-as prompt for deciding the new file's name and where to save it
+  - Abrakadabra.. there is now a properly formatted excel document ready to be imported into Microsoft Teams/Shifts
+  - The Employee Email button is for correlating how the employee's name is recorded in the original excel document. For accurate use all employees must be correlated with an email in this field   
 
   Disclaimer...
     This projects syntax was coded entirely with ai. With that being said I did beforehand internalize the exact architecture of what and how I wanted the program to do what it does.
@@ -20,4 +24,4 @@ How to use it:
   In closing, I feel the need to speak my mind. I used to think that coding and engineering solutions was satisfying due to me being the one to make every nuance of it, including the code itself.
     There is some sort of pride in bragging about how long you have spent creating a solution or how long you have spent on an issue at hand. However, as cliche as it may seem, technology is evolving
     at a rapid rate. I believe that ai should not replace the fundamental understanding of code, syntax or the core of HOW a project works especially, but ai seems to be the upgraded code interpreter. 
-    Instead of inputting a coding language, we can simply code with our human language. This is next level and I plan on keeping up, but I admit I will have to put that part of my ego aside.
+    Instead of inputting a coding language, we can simply code with our human language. This is next level and I plan on keeping up, but admittedly I will have to put that part of my ego aside.
