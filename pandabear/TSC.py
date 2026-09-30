@@ -1,11 +1,69 @@
 import os
+import re
+import sys
 import json
 import customtkinter
 from tkinter import filedialog, messagebox
 import openpyxl
 import xlsx_engine
 
-JSON_DB_PATH = os.path.join(os.path.dirname(__file__), "employee_emails.json")
+
+def _get_base_dir():
+    """
+    Where to keep the persistent employee_emails.json database.
+
+    Plain script: same folder as this .py file (os.path.dirname(__file__)),
+    same as before.
+
+    PyInstaller bundle: __file__ points into the temporary extraction
+    folder (sys._MEIPASS in --onefile mode), which is wiped and recreated
+    on every launch -- writing the JSON database there would silently lose
+    every edit the moment the app closes. sys.frozen is set to True by
+    PyInstaller specifically so code can detect this; in that case, use the
+    folder the actual .exe/binary lives in (sys.executable) instead, which
+    is a real, persistent location on disk.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+def _resource_path(filename):
+    """Finds bundled files both as a plain script and inside a PyInstaller .exe."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, filename)
+
+LOGO_ICO = _resource_path("logo.ico")
+
+def apply_logo(window):
+    """Sets the window icon. Delayed slightly because CustomTkinter sets its own
+    icon on new windows and would otherwise overwrite ours."""
+    if os.path.exists(LOGO_ICO):
+        window.after(250, lambda: window.iconbitmap(LOGO_ICO))
+
+JSON_DB_PATH = os.path.join(_get_base_dir(), "employee_emails.json")
+
+# Characters that are invalid in filenames on Windows and/or Mac/Linux.
+_INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+TROY_CARDINAL = "#8A2432"
+TROY_CARDINAL_HOVER = "#6B1B26"
+TROY_SILVER = "#B3B5B8"
+TROY_SILVER_HOVER = "#8E9094"
+TROY_BLACK = "#1A1A1A"
+
+def sanitize_sheet_name_for_filename(sheet_name):
+    """
+    Turns a sheet/tab name into something safe to use as part of a filename.
+    Invalid characters are REPLACED with a hyphen rather than deleted, so a
+    date-style name like '9/21/2026' becomes the still-readable
+    '9-21-2026' instead of collapsing into '9212026'. Falls back to a
+    generic name if nothing usable is left after cleaning.
+    """
+    cleaned = _INVALID_FILENAME_CHARS.sub("-", sheet_name)
+    cleaned = re.sub(r"-{2,}", "-", cleaned)  # collapse repeated separators
+    cleaned = cleaned.strip(" -.")            # trim stray separators/dots at the ends
+    return cleaned if cleaned else "Schedule"
+
 
 class EmailEditorWindow(customtkinter.CTkToplevel):
     def __init__(self, parent):
@@ -13,34 +71,36 @@ class EmailEditorWindow(customtkinter.CTkToplevel):
         self.title("Manage Employee Emails")
         self.geometry("450x500")
         self.resizable(False, False)
-        
+
         self.transient(parent)
         self.grab_set()
-        
+
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
-        
+
         self.load_data()
-        
-        header_lbl = customtkinter.CTkLabel(self, text="Direct JSON Database Editor", font=customtkinter.CTkFont(size=16, weight="bold"))
+
+        header_lbl = customtkinter.CTkLabel(self, text="Direct JSON Database Editor", text_color=TROY_CARDINAL, font=customtkinter.CTkFont(size=16, weight="bold"))
         header_lbl.grid(row=0, column=0, padx=15, pady=15, sticky="w")
-        
+
         self.scroll_frame = customtkinter.CTkScrollableFrame(self, label_text="Registered Personnel Profiles")
         self.scroll_frame.grid(row=1, column=0, padx=15, pady=10, sticky="nsew")
         self.scroll_frame.grid_columnconfigure((0, 1), weight=1)
-        
+
         self.entries_map = {}
         self.render_rows()
-        
+
         actions_frame = customtkinter.CTkFrame(self, fg_color="transparent")
         actions_frame.grid(row=2, column=0, padx=15, pady=15, sticky="ew")
         actions_frame.grid_columnconfigure((0, 1), weight=1)
-        
-        add_btn = customtkinter.CTkButton(actions_frame, text="+ Add Row", fg_color="#2caf73", hover_color="#228b5a", command=self.add_blank_row)
+
+        add_btn = customtkinter.CTkButton(actions_frame, text="+ Add Row", fg_color=TROY_SILVER, hover_color=TROY_SILVER_HOVER, text_color=TROY_BLACK, command=self.add_blank_row)
         add_btn.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
-        
-        save_btn = customtkinter.CTkButton(actions_frame, text="Save Updates", command=self.save_data)
+
+        save_btn = customtkinter.CTkButton(actions_frame, text="Save Updates", fg_color=TROY_CARDINAL, hover_color=TROY_CARDINAL_HOVER, command=self.save_data)
         save_btn.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+
+        apply_logo(self)
 
     def load_data(self):
         if os.path.exists(JSON_DB_PATH):
@@ -50,33 +110,33 @@ class EmailEditorWindow(customtkinter.CTkToplevel):
             except Exception:
                 self.db = {}
         else:
-            self.db = {"Alyssa": "", "Jack": "", "SK": ""}
+            self.db = {"Bruce": "brucewashere@email.com"}
 
     def render_rows(self):
         for widget in self.scroll_frame.winfo_children():
             widget.destroy()
-            
+
         self.entries_map.clear()
-        
+
         for idx, (name, email) in enumerate(self.db.items()):
             name_input = customtkinter.CTkEntry(self.scroll_frame, placeholder_text="Name")
             name_input.insert(0, name)
             name_input.grid(row=idx, column=0, padx=5, pady=4, sticky="ew")
-            
+
             email_input = customtkinter.CTkEntry(self.scroll_frame, placeholder_text="Work Email")
             email_input.insert(0, email)
             email_input.grid(row=idx, column=1, padx=5, pady=4, sticky="ew")
-            
+
             self.entries_map[idx] = (name_input, email_input)
 
     def add_blank_row(self):
         idx = len(self.entries_map)
         name_input = customtkinter.CTkEntry(self.scroll_frame, placeholder_text="Name")
         name_input.grid(row=idx, column=0, padx=5, pady=4, sticky="ew")
-        
+
         email_input = customtkinter.CTkEntry(self.scroll_frame, placeholder_text="Work Email")
         email_input.grid(row=idx, column=1, padx=5, pady=4, sticky="ew")
-        
+
         self.entries_map[idx] = (name_input, email_input)
 
     def save_data(self):
@@ -86,7 +146,7 @@ class EmailEditorWindow(customtkinter.CTkToplevel):
             email_text = e_widget.get().strip()
             if name_text:
                 updated_db[name_text] = email_text
-                
+
         try:
             with open(JSON_DB_PATH, "w", encoding="utf-8") as f:
                 json.dump(updated_db, f, indent=2)
@@ -140,20 +200,22 @@ class SheetSelectorDialog(customtkinter.CTkToplevel):
                 anchor="w",
                 fg_color="transparent",
                 text_color=("black", "white"),
-                hover_color=("#dcdcdc", "#333333"),
+                hover_color=(TROY_SILVER, TROY_CARDINAL),
                 command=lambda n=name: self.on_select(n),
             )
             sheet_btn.grid(row=idx, column=0, padx=5, pady=3, sticky="ew")
 
         cancel_btn = customtkinter.CTkButton(
-            self, text="Cancel", fg_color="grey", hover_color="#5a5a5a",
-            command=self.on_cancel,
+            self, text="Cancel", fg_color=TROY_SILVER, hover_color=TROY_SILVER_HOVER,
+            text_color=TROY_BLACK, command=self.on_cancel,
         )
         cancel_btn.grid(row=2, column=0, padx=20, pady=(10, 20), sticky="ew")
 
         # Treat closing the window (the "X" button) the same as Cancel,
         # rather than leaving get_selection() waiting forever.
         self.protocol("WM_DELETE_WINDOW", self.on_cancel)
+
+        apply_logo(self)
 
     def on_select(self, name):
         self.result = name
@@ -181,13 +243,15 @@ class App(customtkinter.CTk):
 
         self.label = customtkinter.CTkLabel(self, text="No Schedule Selected.", wraplength=280)
         self.label.grid(row=0, column=0, columnspan=3, padx=10, pady=25, sticky="ew")
-        
-        upload_buton = customtkinter.CTkButton(self, text="Upload Schedule", width=50, corner_radius=10, command=self.select_file)
+
+        upload_buton = customtkinter.CTkButton(self, text="Upload Schedule", width=50, corner_radius=10, fg_color=TROY_CARDINAL, hover_color=TROY_CARDINAL_HOVER, command=self.select_file)
         upload_buton.grid(row=1, column=0, columnspan=3, padx=15, pady=10, sticky="ew")
-        
-        name_mapping = customtkinter.CTkButton(self, text="Employee Email", width=35, corner_radius=20, fg_color="grey", command=self.open_database_editor)
+
+        name_mapping = customtkinter.CTkButton(self, text="Employee Email", width=35, corner_radius=20, fg_color=TROY_SILVER, hover_color=TROY_SILVER_HOVER, text_color=TROY_BLACK, command=self.open_database_editor)
         name_mapping.grid(row=2, column=0, columnspan=3, padx=15, pady=10, sticky="ew")
-        
+
+        apply_logo(self)
+
     def open_database_editor(self):
         EmailEditorWindow(self)
 
@@ -196,7 +260,7 @@ class App(customtkinter.CTk):
             title="Select an Excel (xlsx) File",
             filetypes=[("Excel Files", "*.xlsx")],
         )
-        
+
         if not file_path:
             return
 
@@ -218,7 +282,7 @@ class App(customtkinter.CTk):
             messagebox.showerror("Error", "The selected workbook has no sheets/tabs.")
             return
 
-        # 1. SHEET/TAB SELECTION -- dropdown of real sheet names, not free text
+        # 1. SHEET/TAB SELECTION -- scrollable list of real sheet names
         sheet_dialog = SheetSelectorDialog(self, sheet_names)
         target_sheet_name = sheet_dialog.get_selection()
 
@@ -227,25 +291,26 @@ class App(customtkinter.CTk):
             return
 
         # 2. TRIGGER NATIVE SAVE FILE PATH DIALOG MODAL
+        suggested_filename = f"converted_schedule_{sanitize_sheet_name_for_filename(target_sheet_name)}.xlsx"
         save_dest_path = filedialog.asksaveasfilename(
             title="Export Teams Formatted Schedule As",
             defaultextension=".xlsx",
             filetypes=[("Excel Workbook", "*.xlsx")],
-            initialfile="Formatted_Teams_Schedules.xlsx"
+            initialfile=suggested_filename
         )
-        
+
         if not save_dest_path:
             return
-            
+
         self.label.configure(text=f"Processing tab '{target_sheet_name}'... please wait.")
         self.update_idletasks()
-        
+
         try:
-            # Pass choice directly to engine function interface parameter 
+            # Pass choice directly to engine function interface parameter
             success, missing_employees = xlsx_engine.run_conversion(
                 file_path, JSON_DB_PATH, save_dest_path, target_sheet_name
             )
-            
+
             if success:
                 self.label.configure(text="Conversion Successful!")
                 if missing_employees:
@@ -262,7 +327,7 @@ class App(customtkinter.CTk):
             else:
                 self.label.configure(text="Error processing file pipeline.")
                 messagebox.showerror("Execution Error", "An issue disrupted the background compilation cycle.")
-                
+
         except ValueError as val_err:
             # Catches sheet mismatch validation trigger safely
             self.label.configure(text="Sheet Name Error.")

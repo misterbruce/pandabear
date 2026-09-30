@@ -23,15 +23,30 @@ OUTPUT_COLUMNS = [
     "Shared",
 ]
 
+# --- The three additional sheets, header-only (no data rows), always
+# --- written in this exact order right after "Shifts". ---
+TIME_OFF_COLUMNS = [
+    "Member",
+    "Work Email",
+    "Start Date",
+    "Start Time",
+    "End Date",
+    "End Time",
+    "Time Off Reason",
+    "Theme Color",
+    "Notes",
+    "Shared",
+]
+DAY_NOTES_COLUMNS = ["Date", "Note"]
+MEMBERS_COLUMNS = ["Member", "Work Email"]
+
 # --- Microsoft Teams Shifts "Theme Color" numbered labels (per Microsoft's ---
 # --- Shifts Excel-import template, column H). Source: ---
 # --- https://support.microsoft.com/en-us/teams/shifts/import-a-schedule-from-excel-to-shifts ---
 # NOTE: Microsoft's own doc table lists "8." as "Blue" again (not "DarkBlue"),
 # which looks like a documentation typo given the 9-12 pattern (DarkGreen,
-# DarkPurple, DarkPink, DarkYellow). We're using "DarkBlue" for #8 to match
-# that pattern, but you should sanity-check this one value against the
-# dropdown in your real Teams "Import schedule" Excel template before
-# trusting it for a real import.
+# DarkPurple, DarkPink, DarkYellow). Confirmed with the user to use
+# "DarkBlue" for #8, matching that pattern.
 TEAMS_COLOR_LABELS = {
     "White": "1. White",
     "Blue": "2. Blue",
@@ -55,23 +70,27 @@ def get_time_by_index(col_index, start_col=2):
     return actual_time.strftime("%H:%M")
 
 
-# --- Reference swatches for each Teams shift-color category. These are the ---
-# --- exact hex codes the original script was hand-tuned against; keeping ---
-# --- them as anchors (rather than throwing them out) means colors that ---
-# --- exactly match still behave exactly as before. NEW: any color that ---
-# --- doesn't exactly match now gets classified to whichever anchor it's ---
-# --- CLOSEST to, instead of silently defaulting to White. ---
+# --- Reference swatches for each Teams shift-color category. These are
+# --- anchors for NEAREST-MATCH classification (not exact-string match), so
+# --- a color merely close to one of these still classifies correctly.
+# --- Includes real hex values sampled directly from the user's actual
+# --- schedule screenshot -- FFFFD0 (pale yellow), C8F0F8 (light blue),
+# --- 90D050 (green), D0D0FF (light purple/lavender -- the "closing shift"
+# --- signal color), 0070C0 (blue marker square) -- confirmed against real
+# --- data, plus the original hand-picked guesses.
 _COLOR_ANCHORS_HEX = [
     ("FFFFFF", "White"),
     ("808080", "Grey"), ("D9D9D9", "Grey"), ("A6A6A6", "Grey"),
     ("C0C0C0", "Grey"), ("ECECEC", "Grey"), ("F2F2F2", "Grey"), ("7F7F7F", "Grey"),
-    ("CC99FF", "Purple"), ("CCCCFF", "Purple"),
+    ("CC99FF", "Purple"), ("CCCCFF", "Purple"), ("D0D0FF", "Purple"),
     ("800080", "Dark Purple"), ("7030A0", "Dark Purple"),
-    ("FFFF00", "Yellow"), ("FFE699", "Yellow"),
+    ("FFFF00", "Yellow"), ("FFE699", "Yellow"), ("FFFFD0", "Yellow"),
     ("B3B300", "Dark Yellow"),
     ("DDEBF7", "Blue"), ("8FAADC", "Blue"), ("4472C4", "Blue"), ("00B0F0", "Blue"),
+    ("C8F0F8", "Blue"), ("0070C0", "Blue"),
     ("2F5597", "Dark Blue"), ("0000FF", "Dark Blue"),
     ("00FF00", "Green"), ("E2EFDA", "Green"), ("C6E0B4", "Green"), ("A9D08E", "Green"),
+    ("90D050", "Green"),
     ("375623", "Dark Green"),
     ("FFC0CB", "Pink"),
     ("FF1493", "Dark Pink"), ("FF69B4", "Dark Pink"),
@@ -85,23 +104,24 @@ def _hex_to_rgb(hex6):
 
 _COLOR_ANCHORS_RGB = [(_hex_to_rgb(h), label) for h, label in _COLOR_ANCHORS_HEX]
 
-
-def is_blank_or_white(hex6, threshold=25):
-    """
-    Strict check for 'this cell has no meaningful color' -- no fill at all,
-    or a color extremely close to pure white. Deliberately NOT the same as
-    'nearest anchor is White': a pale-but-intentional shift color (e.g. a
-    light tinted yellow) should still count as a real, working shift, not
-    get swallowed as blank. Only near-exact white/no-fill counts as blank.
-    """
-    if hex6 is None:
-        return True
-    try:
-        r, g, b = _hex_to_rgb(hex6)
-    except Exception:
-        return True
-    dist = ((255 - r) ** 2 + (255 - g) ** 2 + (255 - b) ** 2) ** 0.5
-    return dist <= threshold
+# Collapses any shade (light or dark) of a hue family down to the family
+# name itself. Used to decide (a) whether a cell counts as "real scheduled
+# work" at all, and (b) whether a shift is Green (kept as-is per the user's
+# rule) vs. Yellow/Blue/Purple (all overridden by the opening/closing/
+# in-between timing rule below). Categories NOT in this map -- White, Grey,
+# Pink, Dark Pink -- are never real work, confirmed by the user: "If the
+# time indicator ... is not any form of yellow, blue, purple, or green,
+# then it indicates that there is no work scheduled (even if it is a grey
+# or white)." This directly replaces the old is_blank_or_white() heuristic:
+# the hue-family membership test already handles "is this cell really
+# blank/white" as a side effect (White isn't in the map), so a separate
+# near-white distance check is no longer needed.
+_CATEGORY_TO_HUE_FAMILY = {
+    "Yellow": "Yellow", "Dark Yellow": "Yellow",
+    "Blue": "Blue", "Dark Blue": "Blue",
+    "Purple": "Purple", "Dark Purple": "Purple",
+    "Green": "Green", "Dark Green": "Green",
+}
 
 
 def classify_color(hex6):
@@ -110,8 +130,7 @@ def classify_color(hex6):
     category by Euclidean RGB distance, instead of requiring an exact
     substring match. This means a color that's a slightly different shade
     of blue/green/purple/etc. than our hardcoded anchors still gets
-    correctly classified, rather than silently falling through to White
-    (which was the root cause of colors "always coming out White").
+    correctly classified, rather than silently falling through to White.
     """
     if hex6 is None:
         return "White"
@@ -126,6 +145,15 @@ def classify_color(hex6):
             best_dist = dist
             best_label = label
     return best_label
+
+
+def hue_family_for_hex(hex6):
+    """Returns 'Yellow'/'Blue'/'Purple'/'Green' if this color counts as a
+    real scheduled-work color, or None if it doesn't (White, Grey, Pink,
+    Dark Pink, or anything else that doesn't clearly read as one of the
+    four allowed hues)."""
+    category = classify_color(hex6)
+    return _CATEGORY_TO_HUE_FAMILY.get(category)
 
 
 def to_teams_theme_label(color_name):
@@ -227,6 +255,11 @@ def resolve_fill_hex(fill, theme_colors):
             rgb = start_color.rgb
             if isinstance(rgb, str) and len(rgb) >= 6:
                 hex6 = rgb[-6:].upper()
+                # A fully-transparent "00000000" ARGB string is openpyxl's
+                # way of representing "no real color" on some cells -- treat
+                # that specifically as blank rather than as an authored
+                # black fill. An actually-authored black fill (e.g. opaque
+                # "FF000000") still resolves to "000000" normally.
                 if hex6 != "000000" or rgb.upper() not in ("00000000",):
                     return hex6
             return None
@@ -249,9 +282,100 @@ def resolve_fill_hex(fill, theme_colors):
     return None
 
 
+# --- Unpaid-break calculation ------------------------------------------------
+# Confirmed rules:
+#   >= 4h and < 6h  -> one 10-minute break, centered on the shift's midpoint
+#   >= 6h and < 8h  -> one 30-minute break, centered on the shift's midpoint
+#   >= 8h           -> a 30-minute break centered on the whole-shift midpoint,
+#                       PLUS a 10-minute break centered on the first half's
+#                       midpoint, PLUS a 10-minute break centered on the
+#                       second half's midpoint (total 50 minutes). Stays ONE
+#                       row: Unpaid Break (minutes) = 50, and all three break
+#                       windows are listed in Notes.
+# Applied automatically by duration alone, regardless of source marker
+# colors (confirmed with the user).
+
+def _parse_hhmm(hhmm_str):
+    h, m = hhmm_str.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _format_hhmm(total_minutes):
+    """Formats minutes-since-midnight as civilian time, e.g. 9:25 AM, 12:15 PM."""
+    total_minutes = int(round(total_minutes)) % (24 * 60)
+    hour24, minute = divmod(total_minutes, 60)
+    period = "AM" if hour24 < 12 else "PM"
+    hour12 = hour24 % 12 or 12
+    return f"{hour12}:{minute:02d} {period}"
+
+
+def _round_to_15(total_minutes):
+    return int(round(total_minutes / 15.0) * 15)
+
+
+def _break_note(label, b_start, b_end):
+    return f"{label}: {_format_hhmm(b_start)} - {_format_hhmm(b_end)}"
+
+
+def compute_unpaid_break(start_str, end_str):
+    """
+    Returns (unpaid_break_minutes: int, notes_text: str) for a single shift
+    given its Start Time/End Time strings (24-hour "HH:MM"). Returns
+    (0, "") for shifts under 4 hours -- no break applied.
+    Notes use civilian time; 10-min breaks are "Break", 30-min is "Lunch Break".
+    """
+    start_min = _parse_hhmm(start_str)
+    end_min = _parse_hhmm(end_str)
+    duration = end_min - start_min
+    if duration < 4 * 60:
+        return 0, ""
+
+    if duration < 6 * 60:
+        mid = _round_to_15(start_min + duration / 2)
+        return 10, _break_note("Break", mid - 5, mid + 5)
+
+    if duration < 8 * 60:
+        mid = _round_to_15(start_min + duration / 2)
+        return 30, _break_note("Lunch Break", mid - 15, mid + 15)
+
+    # 8h+ : 10 min in the middle of each half, plus a 30 min lunch in the
+    # middle of the whole shift.
+    half1 = duration // 2
+    half2 = duration - half1
+
+    whole_mid = _round_to_15(start_min + half1)
+    first_half_mid = _round_to_15(start_min + half1 / 2)
+    second_half_mid = _round_to_15(start_min + half1 + half2 / 2)
+
+    note = "; ".join([
+        _break_note("Break", first_half_mid - 5, first_half_mid + 5),
+        _break_note("Lunch Break", whole_mid - 15, whole_mid + 15),
+        _break_note("Break", second_half_mid - 5, second_half_mid + 5),
+    ])
+    return 50, note
+
+
+def determine_output_theme_color(start_time, end_time):
+    """
+    Final exported Theme Color for a shift, based ONLY on its timing. The
+    only possible outputs are Purple, Yellow and Blue -- never Green, White
+    or anything else, regardless of what color the cells were in the
+    source schedule (source colors only decide WHETHER a cell is work).
+      - Ends at 18:00 (6:00 PM)  -> Purple (closing shift). This wins even
+        if the same shift also starts at 07:00.
+      - Starts at 07:00 (7:00 AM) -> Yellow (opening shift).
+      - Anything else             -> Blue.
+    """
+    if end_time == "18:00":
+        return "Purple"
+    if start_time == "07:00":
+        return "Yellow"
+    return "Blue"
+
+
 def run_conversion(excel_path, json_path, output_path, sheet_name):
     """
-    Encapsulated state-machine code engine. 
+    Encapsulated state-machine code engine.
     Loads employees dynamically from the JSON database keys.
     Processes the exact sheet name targeted from the UI input.
     """
@@ -265,10 +389,10 @@ def run_conversion(excel_path, json_path, output_path, sheet_name):
         allowed_employees_lower = []
 
     wb = openpyxl.load_workbook(excel_path, data_only=True)
-    
+
     if sheet_name not in wb.sheetnames:
         raise ValueError(f"Target sheet '{sheet_name}' was not found inside the uploaded workbook. Available sheets: {', '.join(wb.sheetnames)}")
-        
+
     ws = wb[sheet_name]
 
     # Read this specific workbook's real theme palette once, up front, so
@@ -277,10 +401,10 @@ def run_conversion(excel_path, json_path, output_path, sheet_name):
 
     start_date = []
     stop_date = []
-    member = []       
-    # shifts_per_day will now store a list of dicts for each employee to track time alongside column indices:
-    # {"times": ['08:00 AM', '01:00 PM'], "col_idx": 6}
-    shifts_per_day = [] 
+    member = []
+    # shifts_per_day stores, per employee, a list of shift dicts:
+    # {"times": ['08:00', '13:00'], "hue_family": "Yellow", "ends_purple": False}
+    shifts_per_day = []
     emails_per_day = []
     missing_matches = set()
 
@@ -290,11 +414,15 @@ def run_conversion(excel_path, json_path, output_path, sheet_name):
         cell_value = ws.cell(row=row_idx, column=1).value
         if cell_value is None or pd.isna(cell_value):
             continue
-            
+
         excel_name_str = str(cell_value).strip()
         excel_name_lower = excel_name_str.lower()
-        
-        if excel_name_lower == "employee names":
+
+                # Skip the "Employee Name(s)" header label -- it's just there for
+        # readability. Ignores case, spacing and punctuation, so "Employee
+        # Name", "EMPLOYEE NAMES:", "Employee  Names " etc. all match.
+        letters_only = "".join(ch for ch in excel_name_lower if ch.isalpha())
+        if letters_only in ("employeename", "employeenames"):
             continue
 
         # If this text matches a known employee name, always treat it as an
@@ -315,70 +443,90 @@ def run_conversion(excel_path, json_path, output_path, sheet_name):
         if not is_date_parseable and has_date_started:
             if excel_name_lower not in allowed_employees_lower:
                 missing_matches.add(excel_name_str)
-                
+
             member[-1].append(excel_name_str)
-            
+
             safe_email_local_part = excel_name_lower.replace(" ", ".")
             employee_email = email_lookup.get(excel_name_lower, f"{safe_email_local_part}@missing_json_match.com")
             emails_per_day[-1].append(employee_email)
-            
-            START_COL = 2 
-            END_COL = 41 
-            
+
+            START_COL = 2
+            # 7:00 AM ... 5:45 PM (the 15-min slot ending at the 6:00 PM
+            # close-of-day boundary). If a shift is still colored at this
+            # last column, the fallback below records it as ending at 6pm.
+            END_COL = 45
+
             employee_shifts = []
             in_shift = False
             shift_start_time = None
-            shift_start_col = None
-            # Tracks whether purple appeared inside the CURRENT shift block only
-            # (reset every time a new shift block starts), not the whole row.
-            current_shift_has_purple = False
-            
+            # Hue family of the FIRST cell of the current shift block, read
+            # from THIS row while scanning. Previously the engine re-looked-up
+            # the employee's row later by name and always took the first
+            # matching row in the whole sheet -- so when an employee appeared
+            # under several dates on one tab, later days were colored from
+            # the first day's cells (e.g. an opening shift sampled a green
+            # cell from another day and came out Green instead of Yellow).
+            shift_start_hue = None
+            # Tracks whether the MOST RECENTLY seen working cell in the
+            # current shift block was light Purple -- i.e. whether the
+            # shift's colored span currently ENDS in purple, not whether
+            # purple appeared anywhere in it. Overwritten (not OR'd) on
+            # every working cell, so a purple cell in the middle that's
+            # later followed by a non-purple working color correctly does
+            # NOT count. Dark Purple / Blue marker squares are excluded on
+            # purpose -- only light Purple is the "closing" signal.
+            shift_currently_ends_purple = False
+
             for col_idx in range(START_COL, END_COL + 1):
                 cell = ws.cell(row=row_idx, column=col_idx)
                 fill = cell.fill
                 resolved_hex = resolve_fill_hex(fill, theme_colors)
 
-                if is_blank_or_white(resolved_hex):
-                    is_working = False
-                    is_purple = False
-                else:
-                    category = classify_color(resolved_hex)
-                    is_working = category != "Grey"
-                    is_purple = category in ("Purple", "Dark Purple")
-                
+                category = classify_color(resolved_hex)
+                hue_family = _CATEGORY_TO_HUE_FAMILY.get(category)
+                # Only Yellow/Blue/Purple/Green (any shade) count as real
+                # scheduled work. Grey, White, Pink, or anything else means
+                # no work is scheduled there, confirmed by the user even
+                # for grey/white specifically.
+                is_working = hue_family is not None
+                is_purple = category == "Purple"  # light purple only; Dark Purple/Blue markers don't count
+
                 if is_working and not in_shift:
                     in_shift = True
                     shift_start_time = get_time_by_index(col_idx, START_COL)
-                    shift_start_col = col_idx  # Keep track of where this specific shift begins
-                    current_shift_has_purple = is_purple
+                    shift_start_hue = hue_family
+                    shift_currently_ends_purple = is_purple
                 elif is_working and in_shift:
-                    if is_purple:
-                        current_shift_has_purple = True
+                    shift_currently_ends_purple = is_purple
                 elif not is_working and in_shift:
                     in_shift = False
-                    shift_end_time = get_time_by_index(col_idx, START_COL) 
+                    shift_end_time = get_time_by_index(col_idx, START_COL)
                     employee_shifts.append({
                         "times": [shift_start_time, shift_end_time],
-                        "sample_col": shift_start_col,
-                        "has_purple": current_shift_has_purple,
+                        "hue_family": shift_start_hue,
+                        "ends_purple": shift_currently_ends_purple,
                     })
-            
+
             if in_shift:
-                shift_end_time = "17:00"
+                # Still colored at the last scanned column (5:45-6:00 PM
+                # slot) with no visible end -- the day's close-of-business
+                # boundary is 6:00 PM, so that's the correct fallback here.
+                shift_end_time = "18:00"
                 employee_shifts.append({
                     "times": [shift_start_time, shift_end_time],
-                    "sample_col": shift_start_col,
-                    "has_purple": current_shift_has_purple,
+                    "hue_family": shift_start_hue,
+                    "ends_purple": shift_currently_ends_purple,
                 })
-                
-            # Only extend the LAST shift's end time to 6pm if purple showed up
-            # within that last shift block itself (not anywhere else in the row).
-            if employee_shifts and employee_shifts[-1]["has_purple"]:
+
+            # Only extend the LAST shift's end time to 6pm if it currently
+            # ends in light Purple -- not Dark Purple, not the small
+            # blue/dark marker squares, which are ignored on purpose.
+            if employee_shifts and employee_shifts[-1]["ends_purple"]:
                 employee_shifts[-1]["times"][1] = "18:00"
-                
+
             shifts_per_day[-1].append(employee_shifts)
             continue
-            
+
         try:
             parsed_date = dateparser.parse(str(cell_value))
             if parsed_date is not None:
@@ -390,9 +538,9 @@ def run_conversion(excel_path, json_path, output_path, sheet_name):
                 formatted_date = f"{parsed_date.month}/{parsed_date.day}/{parsed_date.year}"
                 start_date.append(formatted_date)
                 stop_date.append(formatted_date)
-                
+
                 member.append([])
-                emails_per_day.append([])  
+                emails_per_day.append([])
                 shifts_per_day.append([])
                 has_date_started = True
         except Exception:
@@ -403,27 +551,16 @@ def run_conversion(excel_path, json_path, output_path, sheet_name):
         for m_idx, emp_name in enumerate(member[d_idx]):
             emp_email = emails_per_day[d_idx][m_idx]
             emp_shifts = shifts_per_day[d_idx][m_idx]
-            
-            target_row_idx = None
-            for r in range(1, ws.max_row + 1):
-                val = ws.cell(row=r, column=1).value
-                if val and str(val).strip().lower() == emp_name.lower():
-                    target_row_idx = r
-                    break
-                    
+
             if not emp_shifts:
                 continue
 
             for shift_info in emp_shifts:
                 times_pair = shift_info["times"]
-                active_col = shift_info["sample_col"]
-                
-                resolved_color_text = "White"
-                if target_row_idx:
-                    # DYNAMIC SAMPLING: Sample the cell exactly where this specific shift block is painted!
-                    sample_cell = ws.cell(row=target_row_idx, column=active_col)
-                    resolved_hex = resolve_fill_hex(sample_cell.fill, theme_colors)
-                    resolved_color_text = classify_color(resolved_hex)
+
+                output_color = determine_output_theme_color(times_pair[0], times_pair[1])
+
+                unpaid_break_minutes, break_notes = compute_unpaid_break(times_pair[0], times_pair[1])
 
                 flat_rows.append({
                     "Member": emp_name,
@@ -433,10 +570,10 @@ def run_conversion(excel_path, json_path, output_path, sheet_name):
                     "Start Time": times_pair[0],
                     "End Date": day_val,
                     "End Time": times_pair[1],
-                    "Theme Color": to_teams_theme_label(resolved_color_text),
+                    "Theme Color": to_teams_theme_label(output_color),
                     "Custom Label": "",
-                    "Unpaid Break (minutes)": "",
-                    "Notes": "",
+                    "Unpaid Break (minutes)": unpaid_break_minutes if unpaid_break_minutes else "",
+                    "Notes": break_notes,
                     "Shared": "1. Shared",
                 })
 
@@ -449,5 +586,10 @@ def run_conversion(excel_path, json_path, output_path, sheet_name):
 
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
         export_df.to_excel(writer, sheet_name="Shifts", index=False)
+        # Header-only sheets -- no data rows, ever. Order matters here:
+        # Shifts, Time Off, Day Notes, Members, left to right in the workbook.
+        pd.DataFrame(columns=TIME_OFF_COLUMNS).to_excel(writer, sheet_name="Time Off", index=False)
+        pd.DataFrame(columns=DAY_NOTES_COLUMNS).to_excel(writer, sheet_name="Day Notes", index=False)
+        pd.DataFrame(columns=MEMBERS_COLUMNS).to_excel(writer, sheet_name="Members", index=False)
 
     return True, list(missing_matches)
