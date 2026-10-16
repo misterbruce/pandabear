@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local/editor and packaging artifacts
+.vscode/
+.idea/
+build/
+dist/
+*.spec
+
+# Local scheduling data (may include employee information)
+employee_emails.json
+**/employee_emails.json
+converted_schedule_*.xlsx
+**/converted_schedule_*.xlsx
